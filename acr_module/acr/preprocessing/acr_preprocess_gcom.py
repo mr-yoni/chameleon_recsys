@@ -1,7 +1,12 @@
+import re, sys
 import argparse
 import pandas as pd
-import re
-import nltk
+import ast
+import spacy
+nlp = spacy.load('en')
+from bs4 import BeautifulSoup
+from multiprocessing import Pool, Manager
+import time
 from sklearn.preprocessing import LabelEncoder
 
 import tensorflow as tf
@@ -14,33 +19,33 @@ from .word_embeddings import load_word_embeddings, process_word_embedding_for_co
 
 def create_args_parser():
     parser = argparse.ArgumentParser()
-
+    DATA_DIR = '/home/user/Dropbox'
     parser.add_argument(
-            '--input_articles_csv_path', default='',
+            '--input_articles_csv_path', default=DATA_DIR+'/Data/input_articles.tsv',
             help='Input path of the news CSV file.')
 
     parser.add_argument(
-            '--input_word_embeddings_path', default='',
+            '--input_word_embeddings_path', default=DATA_DIR+'/articles_word2vec/w2v_model',
             help='Input path of the word2vec embeddings model (word2vec).')    
 
     parser.add_argument(
-            '--output_tf_records_path', default='',
+            '--output_tf_records_path', default=DATA_DIR+'/articles_tfrecords/gcom_articles_tokenized_*.tfrecord.gz',
             help='Output path for generated TFRecords with news content.')
 
     parser.add_argument(
-            '--output_word_vocab_embeddings_path', default='',
+            '--output_word_vocab_embeddings_path', default=DATA_DIR+'/pickles/acr_word_vocab_embeddings.pickle',
             help='Output path for a pickle with words vocabulary and corresponding word embeddings.')
 
     parser.add_argument(
-            '--output_label_encoders', default='',
+            '--output_label_encoders', default=DATA_DIR+'/pickles/acr_label_encoders.pickle',
             help='Output path for a pickle with label encoders (article_id, category_id, publisher_id).')
 
     parser.add_argument(
-        '--articles_by_tfrecord', type=int, default=1000,
+        '--articles_by_tfrecord', type=int, default=5000,
         help='Number of articles to be exported in each TFRecords file')
 
     parser.add_argument(
-        '--vocab_most_freq_words', type=int, default=100000,
+        '--vocab_most_freq_words', type=int, default=50000,
         help='Most frequent words to keep in vocab')
 
     return parser
@@ -103,11 +108,11 @@ def clean_str(string):
     string = re_doublequotes_1.sub('\"', string)
     string = re_doublequotes_2.sub('\'', string)
     string = re_trim.sub(' ', string)
-        
+
     return string.strip()
 
 
-sent_tokenizer = nltk.data.load('tokenizers/punkt/portuguese.pickle')
+# sent_tokenizer = nltk.data.load('tokenizers/punkt/english.pickle')
 def clean_and_filter_first_sentences(string, first_sentences=8):
     # Tokenize sentences and remove short and malformed sentences.
     sentences = []
@@ -118,15 +123,77 @@ def clean_and_filter_first_sentences(string, first_sentences=8):
                 break
     return ' '.join(sentences)
 
+def parseSents(args):
+    sentences = list()
+    doc, q = args
+
+    html_content = doc[0]
+    summary = doc[1]
+    title = [doc[2]]
+
+    soup = BeautifulSoup(html_content, 'html.parser')
+    pis = soup.findAll('p')
+
+    # turn p tags to list of strings
+    content = []
+    for match in pis:
+        text = match.get_text()
+        content.append(text)
+
+    # combine all texts to one list of strings for parsing
+    content = title + summary + content
+    text = '.'.join(content).replace('$','dollar ').replace('%',' percent')
+    parsed = nlp(text)
+    for sent in parsed.sents:
+        current_sen = []
+        for tok in sent:
+            if (tok.is_stop == False) and (tok.is_punct == False) and (tok.pos_ != 'NUM')  and tok.text != ' ':
+                current_sen.append(tok.lemma_.lower())
+            elif (tok.pos_ == 'NUM' and tok.ent_type_ == 'DATE'):
+                current_sen.append('date')
+
+        if len(current_sen)> 5:
+            sentences.append(current_sen)
+
+    return ' '.join(sentences)
+
+
+def nan_to_list(value):
+    return '[]' if type(value) == float else value
+
 #############################################################################################
 
 def load_input_csv(path):
-    news_df = pd.read_csv(path, encoding = 'utf-8')
+    news_df = pd.read_csv(path, encoding = 'utf-8', sep='\t', nrows = 100)
+
+    content = news_df['content'].apply(nan_to_str).tolist()
+    summary = [ast.literal_eval(x) for x in news_df['summary'].apply(nan_to_list)]
+
+    t0 = time.time()
+    p = Pool()
+    m = Manager()
+    q = m.Queue()
+
+    args = [(i, q) for idx, i in enumerate(zip(content, summary, news_df.title.tolist()))]
+
+    result = p.map_async(parseSents, args, chunksize=1)
+
+    while not result.ready():
+        remaining = result._number_left * result._chunksize
+        t = time.time() - t0
+        sys.stderr.write('\r\033[2KRemaining: {0} \033[2KElapsed: {1}'.format(remaining,  t))
+
+        sys.stderr.flush()
+        time.sleep(1)
+    print(sys.stderr)
+
+    output = result.get()
+    sentences = [item for sublist in output for item in sublist]
 
     #Concatenating all available text
     news_df['full_text'] = (news_df['title'].apply(nan_to_str) + ". " + \
-                            news_df['caption'].apply(nan_to_str) + ". " + \
-                            news_df['body'].apply(nan_to_str)
+                            news_df['summary'].apply(nan_to_str) + ". " + \
+                            news_df['content'].apply(nan_to_str)
                        ).apply(clean_and_filter_first_sentences)
 
     return news_df
@@ -158,15 +225,15 @@ def make_sequence_example(row):
         'created_at_ts': tf.train.Feature(int64_list=tf.train.Int64List(value=[row['created_at_ts']])),
         'text_length': tf.train.Feature(int64_list=tf.train.Int64List(value=[row['text_length']]))
     }
-    
+
     context = tf.train.Features(feature=context_features)
-    
+
     sequence_features = {
         'text': make_sequential_feature(row["text_int"], vtype=int)        
-    }    
+    }
 
     sequence_feature_lists = tf.train.FeatureLists(feature_list=sequence_features)
-    
+
     return tf.train.SequenceExample(feature_lists=sequence_feature_lists,
                                     context=context
                                    )    
@@ -185,7 +252,7 @@ def main():
                               article_id_encoder, 
                               category_id_encoder, 
                               domainid_encoder)
-    
+
     print('Tokenizing articles...')
     tokenized_articles = tokenize_articles(news_df['full_text'], clean_str)
 
