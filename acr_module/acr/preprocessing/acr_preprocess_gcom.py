@@ -1,6 +1,7 @@
 import re, sys
 import argparse
 import pandas as pd
+import numpy as np
 import ast
 import spacy
 nlp = spacy.load('en')
@@ -152,14 +153,18 @@ def parseSents(args):
             elif (tok.pos_ == 'NUM' and tok.ent_type_ == 'DATE'):
                 current_sen.append('date')
 
-        if len(current_sen)> 5:
-            sentences.append(current_sen)
+        sentences.append(current_sen)
 
-    return ' '.join(sentences)
+    flat_sentences = [item for sublist in sentences for item in sublist]
+
+    return ' '.join(flat_sentences)
 
 
 def nan_to_list(value):
     return '[]' if type(value) == float else value
+
+def nan_to_cat(value):
+    return ',-1,' if type(value) == float else value
 
 #############################################################################################
 
@@ -168,6 +173,7 @@ def load_input_csv(path):
 
     content = news_df['content'].apply(nan_to_str).tolist()
     summary = [ast.literal_eval(x) for x in news_df['summary'].apply(nan_to_list)]
+    news_df['created_at_ts'] = pd.to_datetime(news_df['created_at_ts']).astype(np.int64) // 10 ** 9
 
     t0 = time.time()
     p = Pool()
@@ -181,47 +187,49 @@ def load_input_csv(path):
     while not result.ready():
         remaining = result._number_left * result._chunksize
         t = time.time() - t0
-        sys.stderr.write('\r\033[2KRemaining: {0} \033[2KElapsed: {1}'.format(remaining,  t))
-
+        sys.stderr.write('\rRemaining: {0:} Elapsed: {1:7.3f}'.format(remaining,  t))
         sys.stderr.flush()
         time.sleep(1)
-    print(sys.stderr)
 
-    output = result.get()
-    sentences = [item for sublist in output for item in sublist]
+    sentences = result.get()
 
+    print ("\nParesed {} sentences".format(len(sentences)))
+
+    assert len(sentences) == len(news_df.index)
     #Concatenating all available text
-    news_df['full_text'] = (news_df['title'].apply(nan_to_str) + ". " + \
-                            news_df['summary'].apply(nan_to_str) + ". " + \
-                            news_df['content'].apply(nan_to_str)
-                       ).apply(clean_and_filter_first_sentences)
+    news_df['full_text'] = np.asarray(sentences)
+    # news_df['full_text'] = (news_df['title'].apply(nan_to_str) + ". " + \
+    #                         news_df['summary'].apply(nan_to_str) + ". " + \
+    #                         news_df['content'].apply(nan_to_str)
+    #                    ).apply(clean_and_filter_first_sentences)
 
     return news_df
 
 def process_cat_features(dataframe):
     article_id_encoder = LabelEncoder()
-    dataframe['id_encoded'] = article_id_encoder.fit_transform(dataframe['id'])
+    dataframe['id_encoded'] = article_id_encoder.fit_transform(dataframe['article_id'])
 
     category_id_encoder = LabelEncoder()
-    dataframe['categoryid_encoded'] = category_id_encoder.fit_transform(dataframe['categoryid'])
+    dataframe['categoryid_encoded'] = category_id_encoder.fit_transform(dataframe['category_id'].apply(nan_to_cat))
 
-    domainid_encoder = LabelEncoder()
-    dataframe['domainid_encoded'] = domainid_encoder.fit_transform(dataframe['domainid'])
+    publisher_id_encoder = LabelEncoder()
+    dataframe['publisherid_encoded'] = category_id_encoder.fit_transform(dataframe['publisher_id'].apply(nan_to_cat))
 
-    return article_id_encoder, category_id_encoder, domainid_encoder
+    return article_id_encoder, category_id_encoder, publisher_id_encoder
 
-def save_article_cat_encoders(output_path, article_id_encoder, category_id_encoder, domainid_encoder):
-    to_serialize = {'article_id': article_id_encoder, 
-                    'category_id': category_id_encoder, 
-                    'publisher_id': domainid_encoder}
+def save_article_cat_encoders(output_path, article_id_encoder, category_id_encoder, publisher_id_encoder):
+    to_serialize = {'article_id': article_id_encoder
+                    ,'category_id': category_id_encoder
+                    ,'publisher_id': category_id_encoder
+                    }
     serialize(output_path, to_serialize)
 
 
 def make_sequence_example(row):
     context_features = {
         'article_id': tf.train.Feature(int64_list=tf.train.Int64List(value=[row['id_encoded']])),
-        'publisher_id': tf.train.Feature(int64_list=tf.train.Int64List(value=[row['domainid_encoded']])),
         'category_id': tf.train.Feature(int64_list=tf.train.Int64List(value=[row['categoryid_encoded']])),
+        'publisher_id': tf.train.Feature(int64_list=tf.train.Int64List(value=[row['publisherid_encoded']])),
         'created_at_ts': tf.train.Feature(int64_list=tf.train.Int64List(value=[row['created_at_ts']])),
         'text_length': tf.train.Feature(int64_list=tf.train.Int64List(value=[row['text_length']]))
     }
@@ -246,12 +254,13 @@ def main():
     news_df = load_input_csv(args.input_articles_csv_path)
 
     print('Encoding categorical features')
-    article_id_encoder, category_id_encoder, domainid_encoder = process_cat_features(news_df)
+    article_id_encoder, category_id_encoder, publisher_id_encoder = process_cat_features(news_df)
     print('Exporting LabelEncoders of categorical features: {}'.format(args.output_label_encoders))
-    save_article_cat_encoders(args.output_label_encoders, 
-                              article_id_encoder, 
-                              category_id_encoder, 
-                              domainid_encoder)
+    save_article_cat_encoders(args.output_label_encoders
+                              ,article_id_encoder
+                              ,category_id_encoder
+                              ,publisher_id_encoder
+                              )
 
     print('Tokenizing articles...')
     tokenized_articles = tokenize_articles(news_df['full_text'], clean_str)
@@ -261,7 +270,7 @@ def main():
     print('Corpus vocabulary size: {}'.format(len(words_freq)))
 
     print("Loading word2vec model and extracting words of this corpus' vocabulary...")
-    w2v_model = load_word_embeddings(args.input_word_embeddings_path, binary=False)
+    w2v_model = load_word_embeddings(args.input_word_embeddings_path)
     word_vocab, word_embeddings_matrix = process_word_embedding_for_corpus_vocab(w2v_model, 
                                                                                 words_freq,
                                                                                 args.vocab_most_freq_words)
@@ -276,10 +285,10 @@ def main():
     news_df['text_int'] = texts_int
 
     data_to_export_df = news_df[['id_encoded', 
-                                 'domainid_encoded', 
-                                 'categoryid_encoded', 
+                                 'categoryid_encoded',
+                                 'publisherid_encoded',
                                  'created_at_ts',
-                                 'text_length', 
+                                 'text_length',
                                  'text_int']]
 
     print('Exporting tokenized articles to TFRecords: {}'.format(args.output_tf_records_path))                                

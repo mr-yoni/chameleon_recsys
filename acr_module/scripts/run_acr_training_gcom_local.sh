@@ -1,6 +1,6 @@
 #!/bin/bash
 
-DATA_DIR="[REPLACE BY THE GCOM ARTICLES DATASET PATH]" && \
+DATA_DIR="/home/user/Dropbox" && \
 JOB_PREFIX=gcom && \
 JOB_ID=`whoami`_${JOB_PREFIX}_`date '+%Y_%m_%d_%H%M%S'` && \
 MODEL_DIR='/tmp/chameleon/gcom/jobs/'${JOB_ID} && \

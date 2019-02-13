@@ -1,11 +1,12 @@
 import numpy as np
+from gensim.models import Word2Vec
 from gensim.models.keyedvectors import KeyedVectors
 
 from ..utils import serialize
 from ..acr_commons import PAD_TOKEN, UNK_TOKEN
 
-def load_word_embeddings(path, binary=True):
-    w2v_model = KeyedVectors.load_word2vec_format(path, binary=binary)
+def load_word_embeddings(path):
+    w2v_model = Word2Vec.load(path)
     return w2v_model
 
 def process_word_embedding_for_corpus_vocab(w2v_model, words_freq, 

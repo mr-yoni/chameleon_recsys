@@ -147,4 +147,6 @@ def prepare_dataset(files, batch_size=128, epochs=1,
         # This is an op that gets the next element from the iterator
         next_element = iterator.get_next()
 
+        assert not tf.debugging.is_nan(next_element)
+
         return next_element
