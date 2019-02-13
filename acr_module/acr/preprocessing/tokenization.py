@@ -8,7 +8,7 @@ from ..acr_commons import UNK_TOKEN
 
 
 def nan_to_str(value):
-    return '' if type(value) == float else value  
+    return '' if type(value) == float else value
 
 def get_words_freq(tokenized_articles):
     words_freq = FreqDist([word for article in tokenized_articles for word in article])
