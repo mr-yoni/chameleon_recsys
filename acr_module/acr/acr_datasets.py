@@ -1,7 +1,7 @@
 import tensorflow as tf
 import multiprocessing
 
-from .utils import merge_two_dicts
+from acr.utils import merge_two_dicts
 
 
 CONTEXT_FEATURES = ['article_id', 'publisher_id', 'category_id', 'created_at_ts', 'text_length']
@@ -147,6 +147,6 @@ def prepare_dataset(files, batch_size=128, epochs=1,
         # This is an op that gets the next element from the iterator
         next_element = iterator.get_next()
 
-        assert not tf.debugging.is_nan(next_element)
+#        assert not tf.debugging.is_nan(next_element)
 
         return next_element

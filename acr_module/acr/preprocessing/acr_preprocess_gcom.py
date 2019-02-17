@@ -12,10 +12,10 @@ from sklearn.preprocessing import LabelEncoder
 
 import tensorflow as tf
 
-from ..tf_records_management import export_dataframe_to_tf_records, make_sequential_feature
-from ..utils import serialize
-from .tokenization import tokenize_articles, nan_to_str, convert_tokens_to_int, get_words_freq
-from .word_embeddings import load_word_embeddings, process_word_embedding_for_corpus_vocab, save_word_vocab_embeddings
+from acr.tf_records_management import export_dataframe_to_tf_records, make_sequential_feature
+from acr.utils import serialize
+from acr.preprocessing.tokenization import tokenize_articles, nan_to_str, convert_tokens_to_int, get_words_freq
+from acr.preprocessing.word_embeddings import load_word_embeddings, process_word_embedding_for_corpus_vocab, save_word_vocab_embeddings
 
 
 def create_args_parser():
@@ -112,17 +112,14 @@ def clean_str(string):
 
     return string.strip()
 
+def clean_summary(string):
+    
+    re_backslash = re.compile(r'\\\\')
+    string = re_backslash.sub(r'\\', string)
+    
+    return string.strip()
 
-# sent_tokenizer = nltk.data.load('tokenizers/punkt/english.pickle')
-def clean_and_filter_first_sentences(string, first_sentences=8):
-    # Tokenize sentences and remove short and malformed sentences.
-    sentences = []
-    for sent in sent_tokenizer.tokenize(string):
-        if sent.count(' ') >= 3 and sent[-1] in ['.', '!', '?', ';']:
-            sentences.append(clean_str(sent))
-            if len(sentences) == first_sentences:
-                break
-    return ' '.join(sentences)
+
 
 def parseSents(args):
     sentences = list()
@@ -166,15 +163,34 @@ def nan_to_list(value):
 def nan_to_cat(value):
     return ',-1,' if type(value) == float else value
 
+def order_str(string):
+    
+    string = string.split(',')
+    string = list(filter(None, string))
+    string = sorted(string)
+    return ','.join(string)
+
 #############################################################################################
 
 def load_input_csv(path):
-    news_df = pd.read_csv(path, encoding = 'utf-8', sep='\t', nrows = 100)
+    news_df = pd.read_csv(path, encoding = 'utf-8', sep='\t')
 
     content = news_df['content'].apply(nan_to_str).tolist()
-    summary = [ast.literal_eval(x) for x in news_df['summary'].apply(nan_to_list)]
+    
+    summary = news_df['summary'].apply(nan_to_list)
+    summary = summary.apply(clean_summary)
+    summary = [ast.literal_eval(x) for x in summary]
+    
     news_df['created_at_ts'] = pd.to_datetime(news_df['created_at_ts']).astype(np.int64) // 10 ** 9
-
+    
+    # Handle NaN in categories
+    news_df['category_id'] = news_df['category_id'].apply(nan_to_cat)
+    news_df['publisher_id'] = news_df['publisher_id'].apply(nan_to_cat)
+    
+    # reduce number of categories
+    news_df['category_id'] = news_df['category_id'].apply(order_str)
+    news_df['publisher_id'] = news_df['publisher_id'].apply(order_str)
+    
     t0 = time.time()
     p = Pool()
     m = Manager()
@@ -210,17 +226,17 @@ def process_cat_features(dataframe):
     dataframe['id_encoded'] = article_id_encoder.fit_transform(dataframe['article_id'])
 
     category_id_encoder = LabelEncoder()
-    dataframe['categoryid_encoded'] = category_id_encoder.fit_transform(dataframe['category_id'].apply(nan_to_cat))
+    dataframe['categoryid_encoded'] = category_id_encoder.fit_transform(dataframe['category_id'])
 
     publisher_id_encoder = LabelEncoder()
-    dataframe['publisherid_encoded'] = category_id_encoder.fit_transform(dataframe['publisher_id'].apply(nan_to_cat))
+    dataframe['publisherid_encoded'] = publisher_id_encoder.fit_transform(dataframe['publisher_id'])
 
     return article_id_encoder, category_id_encoder, publisher_id_encoder
 
 def save_article_cat_encoders(output_path, article_id_encoder, category_id_encoder, publisher_id_encoder):
     to_serialize = {'article_id': article_id_encoder
                     ,'category_id': category_id_encoder
-                    ,'publisher_id': category_id_encoder
+                    ,'publisher_id': publisher_id_encoder
                     }
     serialize(output_path, to_serialize)
 
@@ -290,7 +306,10 @@ def main():
                                  'created_at_ts',
                                  'text_length',
                                  'text_int']]
-
+    
+    # save records in readable format
+    serialize('/home/user/Dropbox/Data/processed_articles.pickle', data_to_export_df)
+    
     print('Exporting tokenized articles to TFRecords: {}'.format(args.output_tf_records_path))                                
     export_dataframe_to_tf_records(data_to_export_df, 
                                    make_sequence_example,

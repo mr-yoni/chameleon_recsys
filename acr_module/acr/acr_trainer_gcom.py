@@ -2,33 +2,50 @@ import logging
 import os
 from time import time
 import json
-import tempfile
+#import tempfile
 import tensorflow as tf
 import numpy as np
 import pandas as pd
+import getpass
+from datetime import datetime
 
-from .utils import resolve_files, deserialize, serialize, log_elapsed_time
-from .acr_model import ACR_Model
-from .acr_datasets import prepare_dataset
+from acr.utils import resolve_files, deserialize, serialize, log_elapsed_time
+from acr.acr_model import ACR_Model
+from acr.acr_datasets import prepare_dataset
 
 
 tf.logging.set_verbosity(tf.logging.INFO)
 
 RANDOM_SEED=42
 
+DATA_DIR="/home/user/Dropbox"
+JOB_PREFIX='gcom'
+JOB_ID=getpass.getuser() + '_' + JOB_PREFIX + '_' + datetime.now().strftime('%Y_%m_%d_%H%M%S')
+MODEL_DIR='/tmp/chameleon/gcom/jobs/' + JOB_ID
 #Control params
+
+####Delete all flags before declare#####
+
+def del_all_flags(FLAGS):
+    flags_dict = FLAGS._flags()    
+    keys_list = [keys for keys in flags_dict]    
+    for keys in keys_list:
+        FLAGS.__delattr__(keys)
+
+del_all_flags(tf.flags.FLAGS)
+
 #tf.flags.DEFINE_string('data_dir', default='',
 #                    help='Directory where the dataset is located')
 tf.flags.DEFINE_string('train_set_path_regex',
-                    default='/train*.tfrecord', help='Train set regex')
-tf.flags.DEFINE_string('model_dir', default='./tmp',
+                    default=DATA_DIR + '/articles_tfrecords/gcom_articles_tokenized_*.tfrecord.gz', help='Train set regex')
+tf.flags.DEFINE_string('model_dir', default=MODEL_DIR,
                     help='Directory where save model checkpoints')
 
-tf.flags.DEFINE_string('input_word_vocab_embeddings_path', default='',
+tf.flags.DEFINE_string('input_word_vocab_embeddings_path', default=DATA_DIR + '/pickles/acr_word_vocab_embeddings.pickle',
                     help='Input path for a pickle with words vocabulary and corresponding word embeddings')
-tf.flags.DEFINE_string('input_label_encoders_path', default='',
+tf.flags.DEFINE_string('input_label_encoders_path', default=DATA_DIR + '/pickles/acr_label_encoders.pickle',
                     help='Input path for a pickle with label encoders (article_id, category_id, publisher_id)')
-tf.flags.DEFINE_string('output_acr_metadata_embeddings_path', default='',
+tf.flags.DEFINE_string('output_acr_metadata_embeddings_path', default=DATA_DIR + '/pickles/acr_articles_metadata_embeddings.pickle',
                     help='Output path for a pickle with articles metadata and content embeddings')
 
 #Model params
@@ -39,12 +56,12 @@ tf.flags.DEFINE_integer('acr_embeddings_size', default=250, help='Embedding size
 
 
 #Training params
-tf.flags.DEFINE_integer('batch_size', default=64, help='Batch size')
+tf.flags.DEFINE_integer('batch_size', default=32, help='Batch size')
 tf.flags.DEFINE_integer('truncate_tokens_length', default=300, help='Truncate the sequence of tokens (words) to this limit')
 tf.flags.DEFINE_integer('training_epochs', default=10, help='Training epochs')
-tf.flags.DEFINE_float('learning_rate', default=1e-3, help='Lerning Rate')
+tf.flags.DEFINE_float('learning_rate', default=3e-4, help='Lerning Rate')
 tf.flags.DEFINE_float('dropout_keep_prob', default=1.0, help='Dropout (keep prob.)')
-tf.flags.DEFINE_float('l2_reg_lambda', default=1e-3, help='L2 regularization')
+tf.flags.DEFINE_float('l2_reg_lambda', default=7e-4, help='L2 regularization')
 
 
 FLAGS = tf.flags.FLAGS
@@ -53,7 +70,7 @@ FLAGS = tf.flags.FLAGS
 
 def load_acr_preprocessing_assets(acr_label_encoders_path, word_vocab_embeddings_path):
     acr_label_encoders = deserialize(acr_label_encoders_path)
-    article_id_encoder = acr_label_encoders['article_id']
+#    article_id_encoder = acr_label_encoders['article_id']
     tf.logging.info("Read article id label encoder: {}".format(len(acr_label_encoders['article_id'].classes_)))  
 
     publishers_count = len(acr_label_encoders['publisher_id'].classes_)
@@ -73,7 +90,7 @@ def acr_model_fn(features, labels, mode, params):
             num_buckets=params['publishers_count']))
     metadata_feature_columns = [publisher_column]
     metadata_features={'publisher_id': features['publisher_id']}
-
+        
     acr_model = ACR_Model(params['text_feature_extractor'], features, metadata_features, metadata_feature_columns, labels, mode, params)   
     
     loss = None
@@ -91,7 +108,7 @@ def acr_model_fn(features, labels, mode, params):
         eval_metrics = {'accuracy': (acr_model.accuracy, acr_model.accuracy_update_op)}
        
     predictions = None
-    prediction_hooks = None
+#    prediction_hooks = None
     if mode == tf.estimator.ModeKeys.PREDICT:
         predictions = {#Category prediction
                        'predicted_category_id': acr_model.predictions,

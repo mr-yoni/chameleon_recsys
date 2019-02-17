@@ -4,7 +4,7 @@ from nltk.tokenize import word_tokenize
 from nltk import FreqDist
 from nltk.corpus import stopwords
 
-from ..acr_commons import UNK_TOKEN
+from acr.acr_commons import UNK_TOKEN
 
 
 def nan_to_str(value):

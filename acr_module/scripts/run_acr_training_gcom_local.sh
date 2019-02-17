@@ -11,11 +11,11 @@ python3 -m acr.acr_trainer_gcom \
 	--input_word_vocab_embeddings_path ${DATA_DIR}/pickles/acr_word_vocab_embeddings.pickle \
 	--input_label_encoders_path ${DATA_DIR}/pickles/acr_label_encoders.pickle \
 	--output_acr_metadata_embeddings_path ${DATA_DIR}/pickles/acr_articles_metadata_embeddings.pickle \
-	--batch_size 64 \
-	--truncate_tokens_length 300 \
-	--training_epochs 5 \
+	--batch_size 32 \
+	--truncate_tokens_length 900 \
+	--training_epochs 50 \
 	--learning_rate 3e-4 \
-	--dropout_keep_prob 1.0 \
+	--dropout_keep_prob 0.9 \
 	--l2_reg_lambda 7e-4 \
 	--text_feature_extractor "CNN" \
 	--cnn_filter_sizes "3,4,5" \

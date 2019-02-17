@@ -1,7 +1,7 @@
 import tensorflow as tf
 import pickle
 from time import time
-
+    
 def serialize(filename, obj):
     #with open(filename, 'wb') as handle:
     with tf.gfile.Open(filename, 'wb') as handle:
